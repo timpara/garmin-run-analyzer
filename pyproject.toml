@@ -1,0 +1,11 @@
+[project]
+name = "garmin-run-analyzer"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "garminconnect>=0.3.6",
+    "pydantic-ai[openai]>=2.10.0",
+    "python-dotenv>=1.2.2",
+]
