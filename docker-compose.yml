@@ -1,0 +1,15 @@
+services:
+  garmin-coach:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - garmin-tokens:/root/.garmin_tokens
+    # First run only: use `docker compose run -it garmin-coach` to complete
+    # Garmin MFA login interactively. After that, restart normally with
+    # `docker compose up -d`.
+    stdin_open: true
+    tty: true
+
+volumes:
+  garmin-tokens:

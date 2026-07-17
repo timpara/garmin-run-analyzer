@@ -81,14 +81,59 @@ uv run python discord_bot.py
 **Finding your Discord user ID:**
 Settings → Advanced → enable Developer Mode, then right-click your username → Copy User ID.
 
+## Docker / TrueNAS Deployment
+
+The Discord bot can run as a Docker container, which makes it easy to deploy on TrueNAS SCALE or any Docker host.
+
+### First run (interactive MFA login)
+
+Garmin requires an MFA code on first login. Run the container interactively once to complete authentication:
+
+```bash
+docker compose run -it garmin-coach
+```
+
+Enter the MFA code when prompted. The session token is saved to a persistent volume (`garmin-tokens`) and reused on subsequent starts.
+
+### Normal operation
+
+After the initial login, run detached:
+
+```bash
+docker compose up -d
+```
+
+The container restarts automatically on reboot (`unless-stopped` policy).
+
+### TrueNAS SCALE
+
+1. Clone this repo to a dataset on your NAS (e.g., `/mnt/pool/apps/garmin-run-analyzer`)
+2. Create a `.env` file with your credentials
+3. SSH into TrueNAS and run `docker compose run -it garmin-coach` for the initial MFA login
+4. Then `docker compose up -d` to run in the background
+5. The bot survives reboots via the restart policy
+
+### Token expiry
+
+Garmin session tokens eventually expire. When they do, the bot will fail to fetch data. To re-authenticate:
+
+```bash
+docker compose down
+docker compose run -it garmin-coach
+# complete MFA, then Ctrl+C
+docker compose up -d
+```
+
 ## Project Structure
 
 ```
-main.py           # CLI entry point
-discord_bot.py    # Discord bot entry point
-agent.py          # Pydantic AI agent, system prompt, and all tools
-garmin_client.py  # Garmin Connect API wrapper
-models.py         # Pydantic data models
+main.py            # CLI entry point
+discord_bot.py     # Discord bot entry point
+agent.py           # Pydantic AI agent, system prompt, and all tools
+garmin_client.py   # Garmin Connect API wrapper
+models.py          # Pydantic data models
+Dockerfile         # Container image
+docker-compose.yml # Docker Compose config
 ```
 
 ## Security
