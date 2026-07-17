@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import datetime
+import json
 import os
 import sys
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import discord
@@ -13,6 +15,17 @@ from agent import Deps, create_agent
 from garmin_client import GarminClient
 
 DISCORD_MSG_LIMIT = 2000
+SEEN_RUNS_FILE = Path(os.getenv("SEEN_RUNS_FILE", "seen_runs.json"))
+MAX_SEEN_IDS = 200
+
+TRAINING_RECAP_CHANNEL = "training-recap"
+TRAINING_RECAP_PROMPT = (
+    "A new run just completed. Here are the basic stats:\n\n{run_summary}\n\n"
+    "Use get_run_details (activity_id {activity_id}) and any other relevant tools "
+    "to do a full analysis. Assess pacing consistency, HR drift, effort vs zones, "
+    "and any notable patterns. Give a short verdict (1 line) followed by 1-2 key "
+    "observations and one actionable takeaway. Keep it under 300 words."
+)
 
 DAILY_WORKOUT_CHANNEL = "daily-workout"
 DAILY_WORKOUT_PROMPT = (
@@ -42,6 +55,24 @@ def split_message(text: str, limit: int = DISCORD_MSG_LIMIT) -> list[str]:
     if remaining:
         chunks.append(remaining)
     return chunks
+
+
+def load_seen_runs() -> set[int]:
+    """Load previously seen activity IDs from disk."""
+    if SEEN_RUNS_FILE.exists():
+        try:
+            data = json.loads(SEEN_RUNS_FILE.read_text())
+            return set(data)
+        except (json.JSONDecodeError, TypeError):
+            return set()
+    return set()
+
+
+def save_seen_runs(seen: set[int]) -> None:
+    """Persist seen activity IDs, keeping only the most recent ones."""
+    # Keep bounded to avoid unbounded growth
+    ids = sorted(seen)[-MAX_SEEN_IDS:]
+    SEEN_RUNS_FILE.write_text(json.dumps(ids))
 
 
 def main() -> None:
@@ -141,6 +172,74 @@ def main() -> None:
     async def before_daily_workout() -> None:
         await client.wait_until_ready()
 
+    # --- Training recap polling ---
+    seen_runs = load_seen_runs()
+
+    def find_training_recap_channel() -> discord.TextChannel | None:
+        for channel in client.get_all_channels():
+            if (
+                isinstance(channel, discord.TextChannel)
+                and channel.name.lower() == TRAINING_RECAP_CHANNEL
+            ):
+                return channel
+        return None
+
+    @tasks.loop(minutes=15)
+    async def training_recap_task() -> None:
+        nonlocal seen_runs
+        channel = find_training_recap_channel()
+        if channel is None:
+            return
+
+        try:
+            recent_runs = garmin.get_recent_runs(5)
+        except Exception as e:
+            print(f"[training-recap] Failed to fetch recent runs: {e}")
+            return
+
+        # On first ever run (empty state), seed with current IDs to avoid spam.
+        if not seen_runs:
+            seen_runs = {r.activity_id for r in recent_runs}
+            save_seen_runs(seen_runs)
+            print(f"[training-recap] Seeded {len(seen_runs)} existing run IDs.")
+            return
+
+        new_runs = [r for r in recent_runs if r.activity_id not in seen_runs]
+        if not new_runs:
+            return
+
+        for run in new_runs:
+            pace_str = (
+                f"{int(run.avg_pace_min_per_km)}:{int((run.avg_pace_min_per_km % 1) * 60):02d}/km"
+                if run.avg_pace_min_per_km
+                else "N/A"
+            )
+            run_summary = (
+                f"- Name: {run.activity_name}\n"
+                f"- Date: {run.activity_date}\n"
+                f"- Distance: {run.distance_km:.2f} km\n"
+                f"- Duration: {int(run.duration_seconds // 60)}:{int(run.duration_seconds % 60):02d}\n"
+                f"- Avg Pace: {pace_str}\n"
+                f"- Avg HR: {run.avg_heart_rate or 'N/A'} bpm\n"
+                f"- Elevation Gain: {run.elevation_gain_m or 0:.0f} m"
+            )
+            prompt = TRAINING_RECAP_PROMPT.format(
+                run_summary=run_summary, activity_id=run.activity_id
+            )
+            try:
+                result = await agent.run(prompt, deps=deps)
+                header = f"**New Run: {run.activity_name}** ({run.activity_date})\n\n"
+                for chunk in split_message(header + result.output):
+                    await channel.send(chunk)
+                seen_runs.add(run.activity_id)
+                save_seen_runs(seen_runs)
+            except Exception as e:
+                print(f"[training-recap] Error posting recap for {run.activity_id}: {e}")
+
+    @training_recap_task.before_loop
+    async def before_training_recap() -> None:
+        await client.wait_until_ready()
+
     @client.event
     async def on_ready() -> None:
         print(f"Discord bot connected as {client.user}. DM it to chat.")
@@ -149,6 +248,12 @@ def main() -> None:
             print(
                 f"Scheduled daily workout posts at 07:00, 08:00, 09:00 {tz_name} "
                 f"in #{DAILY_WORKOUT_CHANNEL}."
+            )
+        if not training_recap_task.is_running():
+            training_recap_task.start()
+            print(
+                f"Polling for new runs every 15 minutes; "
+                f"recaps will post in #{TRAINING_RECAP_CHANNEL}."
             )
 
     @client.event
