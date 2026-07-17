@@ -24,11 +24,16 @@ async def main() -> None:
 
     # Login to Garmin
     print("Logging in to Garmin Connect...")
+    print("(If MFA is required, check your email for a verification code)")
     garmin = GarminClient(garmin_email, garmin_password)
     try:
         garmin.login()
     except Exception as e:
-        print(f"Failed to login to Garmin Connect: {e}")
+        err = str(e)
+        if "429" in err or "rate" in err.lower():
+            print(f"\nRate limited by Garmin. Wait a few minutes and try again.")
+        else:
+            print(f"\nFailed to login to Garmin Connect: {e}")
         sys.exit(1)
     print("Logged in successfully.\n")
 
@@ -40,12 +45,12 @@ async def main() -> None:
     print("=" * 40)
     print("Ask me anything about your running data.")
     print("Examples:")
-    print("  - Show my last 5 runs")
+    print("  - Am I recovered enough to do a hard workout today?")
+    print("  - Assess my current fitness and training load")
+    print("  - Is my easy/hard intensity distribution right?")
     print("  - How has my pace changed over the last month?")
-    print("  - Analyze my heart rate zones from recent runs")
-    print("  - Compare my last two long runs")
-    print("  - What workout should I do next?")
-    print("  - Give me a weekly training plan")
+    print("  - What workout should I do next, and why?")
+    print("  - Build me a training week toward a sub-20 5k")
     print("\nType 'quit' or 'exit' to stop.\n")
 
     message_history = []
@@ -70,7 +75,7 @@ async def main() -> None:
                 message_history=message_history,
             )
             message_history = result.all_messages()
-            print(f"\nCoach: {result.data}\n")
+            print(f"\nCoach: {result.output}\n")
         except Exception as e:
             print(f"\nError: {e}\n")
 
