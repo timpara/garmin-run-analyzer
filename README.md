@@ -107,6 +107,32 @@ The container restarts automatically on reboot (`unless-stopped` policy).
 
 ### TrueNAS SCALE
 
+#### Option A: Custom App (recommended)
+
+The image is automatically built and published to GHCR on every push. Use it directly from the TrueNAS UI:
+
+1. Go to **Apps → Discover → Custom App**
+2. Fill in the form:
+   - **Application Name:** `garmin-run-analyzer`
+   - **Image Repository:** `ghcr.io/timpara/garmin-run-analyzer`
+   - **Tag:** `latest`
+   - **Container Configuration → Environment Variables:** add all variables from `.env.example` (`GARMIN_EMAIL`, `GARMIN_PASSWORD`, `AI_FOUNDRY_BASE_URL`, `AI_FOUNDRY_API_KEY`, `DISCORD_BOT_TOKEN`, `DISCORD_ALLOWED_USER_ID`, `DISCORD_TIMEZONE`, `DISCORD_CHANNELS`)
+   - **Storage Configuration:** add a host path or volume mount at `/root/.garmin_tokens` to persist Garmin session tokens
+3. Deploy the app
+
+**Initial MFA login:** The TrueNAS Custom App doesn't support interactive input. SSH into TrueNAS and run the container interactively once to complete MFA:
+
+```bash
+docker run -it --rm \
+  --env-file /path/to/your/.env \
+  -v garmin-tokens:/root/.garmin_tokens \
+  ghcr.io/timpara/garmin-run-analyzer
+```
+
+After entering the MFA code and seeing "Discord bot connected", press Ctrl+C. The token is saved in the volume. Now start the app from the TrueNAS UI — it will reuse the saved token.
+
+#### Option B: Docker Compose via SSH
+
 1. Clone this repo to a dataset on your NAS (e.g., `/mnt/pool/apps/garmin-run-analyzer`)
 2. Create a `.env` file with your credentials
 3. SSH into TrueNAS and run `docker compose run -it garmin-coach` for the initial MFA login
