@@ -5,8 +5,9 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -53,50 +54,51 @@ _cache = _DataCache()
 # Data collection — all blocking Garmin calls wrapped in to_thread
 # ---------------------------------------------------------------------------
 
-async def _collect(garmin: GarminClient) -> dict[str, Any]:
+async def _collect(garmin: GarminClient, tzinfo: ZoneInfo) -> dict[str, Any]:
     """Fetch all KPIs from Garmin. Returns a JSON-serialisable dict."""
 
     def _fetch() -> dict[str, Any]:
         out: dict[str, Any] = {}
+        today = datetime.now(tzinfo).date()
 
         # Today's wellness
         try:
-            stats = garmin.get_daily_stats()
+            stats = garmin.get_daily_stats(today)
             out["daily_stats"] = stats.model_dump()
         except Exception as e:
             out["daily_stats"] = {"error": str(e)}
 
         # Body battery
         try:
-            bb = garmin.get_body_battery()
+            bb = garmin.get_body_battery(today)
             out["body_battery"] = bb.model_dump()
         except Exception as e:
             out["body_battery"] = {"error": str(e)}
 
         # Training readiness
         try:
-            tr = garmin.get_training_readiness()
+            tr = garmin.get_training_readiness(today)
             out["readiness"] = tr.model_dump()
         except Exception as e:
             out["readiness"] = {"error": str(e)}
 
         # HRV
         try:
-            hrv = garmin.get_hrv_status()
+            hrv = garmin.get_hrv_status(today)
             out["hrv"] = hrv.model_dump()
         except Exception as e:
             out["hrv"] = {"error": str(e)}
 
         # Sleep
         try:
-            sleep = garmin.get_sleep_summary()
+            sleep = garmin.get_sleep_summary(today)
             out["sleep"] = sleep.model_dump()
         except Exception as e:
             out["sleep"] = {"error": str(e)}
 
         # Training status
         try:
-            ts = garmin.get_training_status()
+            ts = garmin.get_training_status(today)
             out["training_status"] = ts.model_dump()
         except Exception as e:
             out["training_status"] = {"error": str(e)}
@@ -141,7 +143,7 @@ async def _collect(garmin: GarminClient) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# HTML template — self-contained, Chart.js from CDN
+# HTML template — self-contained, Chart.js from CDN, full-screen FHD layout
 # ---------------------------------------------------------------------------
 
 HTML_TEMPLATE = """\
@@ -160,19 +162,21 @@ HTML_TEMPLATE = """\
     --blue: #3b82f6; --orange: #f97316; --purple: #a855f7;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
          background: var(--bg); color: var(--text); line-height: 1.5;
-         padding: 1rem; max-width: 1400px; margin: 0 auto; }
-  h1 { font-size: 1.5rem; margin-bottom: .25rem; }
+         padding: 1.5rem 2rem; }
+  h1 { font-size: 1.6rem; margin-bottom: .25rem; }
   .subtitle { color: var(--muted); font-size: .85rem; margin-bottom: 1.5rem; }
   .grid { display: grid; gap: 1rem; }
-  .grid-4 { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
-  .grid-2 { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+  .grid-8 { grid-template-columns: repeat(8, 1fr); }
+  .grid-4 { grid-template-columns: repeat(4, 1fr); }
+  .grid-2 { grid-template-columns: repeat(2, 1fr); }
   .card { background: var(--surface); border: 1px solid var(--border);
-          border-radius: .75rem; padding: 1rem; }
-  .card h3 { font-size: .75rem; text-transform: uppercase; color: var(--muted);
-             letter-spacing: .05em; margin-bottom: .5rem; }
-  .stat { font-size: 1.75rem; font-weight: 700; }
+          border-radius: .75rem; padding: 1rem 1.25rem; }
+  .card h3 { font-size: .7rem; text-transform: uppercase; color: var(--muted);
+             letter-spacing: .06em; margin-bottom: .4rem; }
+  .stat { font-size: 2rem; font-weight: 700; }
   .stat-sm { font-size: .85rem; color: var(--muted); }
   .stat-unit { font-size: .9rem; font-weight: 400; color: var(--muted); }
   .badge { display: inline-block; padding: .15rem .5rem; border-radius: .25rem;
@@ -184,24 +188,34 @@ HTML_TEMPLATE = """\
   section { margin-bottom: 1.5rem; }
   section > h2 { font-size: 1.1rem; margin-bottom: .75rem; border-bottom: 1px solid var(--border);
                  padding-bottom: .5rem; }
-  table { width: 100%; border-collapse: collapse; font-size: .85rem; }
-  th { text-align: left; color: var(--muted); font-weight: 500; padding: .5rem; border-bottom: 1px solid var(--border); }
-  td { padding: .5rem; border-bottom: 1px solid var(--border); }
-  .sport-icon { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: .4rem; }
+  table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+  th { text-align: left; color: var(--muted); font-weight: 500; padding: .5rem .75rem; border-bottom: 1px solid var(--border); }
+  td { padding: .5rem .75rem; border-bottom: 1px solid var(--border); }
+  .sport-icon { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: .4rem; vertical-align: middle; }
   .sport-running { background: var(--green); }
   .sport-cycling { background: var(--blue); }
   .sport-strength { background: var(--orange); }
   .sport-swimming { background: var(--purple); }
   .sport-other { background: var(--muted); }
   .workout-box { background: var(--surface); border: 1px solid var(--accent);
-                 border-radius: .75rem; padding: 1rem; white-space: pre-wrap;
+                 border-radius: .75rem; padding: 1.25rem; white-space: pre-wrap;
                  font-size: .9rem; line-height: 1.6; }
   .workout-box .empty { color: var(--muted); font-style: italic; }
-  canvas { max-height: 250px; }
-  .progress-bar { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; margin-top: .25rem; }
+  canvas { max-height: 280px; }
+  .progress-bar { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; margin-top: .35rem; }
   .progress-fill { height: 100%; border-radius: 3px; }
   .loading { text-align: center; padding: 3rem; color: var(--muted); }
-  @media (max-width: 600px) { .stat { font-size: 1.3rem; } body { padding: .5rem; } }
+  @media (max-width: 1200px) {
+    .grid-8 { grid-template-columns: repeat(4, 1fr); }
+    .grid-4 { grid-template-columns: repeat(2, 1fr); }
+  }
+  @media (max-width: 600px) {
+    .grid-8 { grid-template-columns: repeat(2, 1fr); }
+    .grid-4 { grid-template-columns: 1fr; }
+    .grid-2 { grid-template-columns: 1fr; }
+    .stat { font-size: 1.3rem; }
+    body { padding: .75rem; }
+  }
 </style>
 </head>
 <body>
@@ -225,7 +239,8 @@ function sportLabel(s) {
   return map[sportBucket(s)] || s;
 }
 
-function v(val, fallback='-') { return val != null ? val : fallback; }
+function v(val, fallback) { if (fallback === undefined) fallback = '-'; return val != null ? val : fallback; }
+function num(val) { return (typeof val === 'number') ? val.toLocaleString() : '-'; }
 function pct(val, goal) { return (val && goal) ? Math.min(Math.round(val/goal*100),999) : 0; }
 
 function readinessColor(score) {
@@ -237,7 +252,8 @@ function readinessColor(score) {
 
 function badge(text, color) { return `<span class="badge badge-${color}">${text}</span>`; }
 
-function progressBar(val, goal, color='var(--accent)') {
+function progressBar(val, goal, color) {
+  color = color || 'var(--accent)';
   const p = Math.min(pct(val,goal), 100);
   return `<div class="progress-bar"><div class="progress-fill" style="width:${p}%;background:${color}"></div></div>`;
 }
@@ -245,7 +261,7 @@ function progressBar(val, goal, color='var(--accent)') {
 function fmtDuration(mins) {
   if (!mins) return '-';
   const h = Math.floor(mins/60), m = Math.round(mins%60);
-  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+  return h > 0 ? h+'h '+m+'m' : m+'m';
 }
 
 function fmtDist(km) { return km != null ? km.toFixed(1) : '-'; }
@@ -271,165 +287,158 @@ function renderDashboard(d) {
 
   let html = '';
 
-  // --- Today's Stats ---
-  html += `<section><h2>Today</h2><div class="grid grid-4">`;
+  // --- Today's Stats (8-column grid for FHD) ---
+  html += '<section><h2>Today</h2><div class="grid grid-8">';
 
   // Steps
   const stepPct = pct(ds.total_steps, ds.step_goal);
-  html += `<div class="card"><h3>Steps</h3>
-    <div class="stat">${v(ds.total_steps,'0').toLocaleString?.() || v(ds.total_steps,'0')}</div>
-    <div class="stat-sm">Goal: ${v(ds.step_goal,'-').toLocaleString?.() || v(ds.step_goal,'-')} (${stepPct}%)</div>
-    ${progressBar(ds.total_steps, ds.step_goal, 'var(--green)')}</div>`;
+  html += '<div class="card"><h3>Steps</h3>' +
+    '<div class="stat">' + num(ds.total_steps || 0) + '</div>' +
+    '<div class="stat-sm">Goal: ' + num(ds.step_goal) + ' (' + stepPct + '%)</div>' +
+    progressBar(ds.total_steps, ds.step_goal, 'var(--green)') + '</div>';
 
   // Body Battery
-  html += `<div class="card"><h3>Body Battery</h3>
-    <div class="stat">${v(bb.current_level,'-')}<span class="stat-unit">/100</span></div>
-    <div class="stat-sm">High ${v(bb.highest_level,'-')} &middot; Low ${v(bb.lowest_level,'-')}</div></div>`;
+  html += '<div class="card"><h3>Body Battery</h3>' +
+    '<div class="stat">' + v(bb.current_level,'-') + '<span class="stat-unit">/100</span></div>' +
+    '<div class="stat-sm">High ' + v(bb.highest_level,'-') + ' &middot; Low ' + v(bb.lowest_level,'-') + '</div></div>';
 
   // Training Readiness
   const rc = readinessColor(rd.score);
-  html += `<div class="card"><h3>Readiness</h3>
-    <div class="stat">${v(rd.score,'-')}<span class="stat-unit">/100</span></div>
-    <div class="stat-sm">${badge(v(rd.level,'?'), rc)}</div></div>`;
+  html += '<div class="card"><h3>Readiness</h3>' +
+    '<div class="stat">' + v(rd.score,'-') + '<span class="stat-unit">/100</span></div>' +
+    '<div class="stat-sm">' + badge(v(rd.level,'?'), rc) + '</div></div>';
 
   // Sleep
-  html += `<div class="card"><h3>Sleep</h3>
-    <div class="stat">${sl.total_sleep_hours != null ? sl.total_sleep_hours.toFixed(1) : '-'}<span class="stat-unit">hrs</span></div>
-    <div class="stat-sm">Score: ${v(sl.sleep_score,'-')}/100</div></div>`;
+  html += '<div class="card"><h3>Sleep</h3>' +
+    '<div class="stat">' + (sl.total_sleep_hours != null ? sl.total_sleep_hours.toFixed(1) : '-') + '<span class="stat-unit">hrs</span></div>' +
+    '<div class="stat-sm">Score: ' + v(sl.sleep_score,'-') + '/100</div></div>';
 
   // HRV
   const hrvColor = (hrv.status||'').toLowerCase().includes('balanced') ? 'green' : 'yellow';
-  html += `<div class="card"><h3>HRV</h3>
-    <div class="stat">${v(hrv.last_night_avg_ms,'-')}<span class="stat-unit">ms</span></div>
-    <div class="stat-sm">${badge(v(hrv.status,'?'), hrvColor)} &middot; Avg ${v(hrv.weekly_avg_ms,'-')}ms</div></div>`;
+  html += '<div class="card"><h3>HRV</h3>' +
+    '<div class="stat">' + v(hrv.last_night_avg_ms,'-') + '<span class="stat-unit">ms</span></div>' +
+    '<div class="stat-sm">' + badge(v(hrv.status,'?'), hrvColor) + ' &middot; Avg ' + v(hrv.weekly_avg_ms,'-') + 'ms</div></div>';
 
   // Resting HR
-  html += `<div class="card"><h3>Resting HR</h3>
-    <div class="stat">${v(sl.resting_heart_rate || ds.resting_heart_rate,'-')}<span class="stat-unit">bpm</span></div>
-    <div class="stat-sm">Overnight avg ${v(sl.avg_overnight_hr,'-')} bpm</div></div>`;
+  html += '<div class="card"><h3>Resting HR</h3>' +
+    '<div class="stat">' + v(sl.resting_heart_rate || ds.resting_heart_rate,'-') + '<span class="stat-unit">bpm</span></div>' +
+    '<div class="stat-sm">Overnight avg ' + v(sl.avg_overnight_hr,'-') + ' bpm</div></div>';
 
   // Intensity Minutes
   const modMin = ds.moderate_intensity_minutes || 0;
   const vigMin = ds.vigorous_intensity_minutes || 0;
-  const totalInt = modMin + vigMin * 2;  // vigorous counts double toward weekly goal
-  html += `<div class="card"><h3>Intensity Min</h3>
-    <div class="stat">${modMin + vigMin}<span class="stat-unit">min</span></div>
-    <div class="stat-sm">Mod ${modMin} &middot; Vig ${vigMin}</div></div>`;
+  html += '<div class="card"><h3>Intensity Min</h3>' +
+    '<div class="stat">' + (modMin + vigMin) + '<span class="stat-unit">min</span></div>' +
+    '<div class="stat-sm">Mod ' + modMin + ' &middot; Vig ' + vigMin + '</div></div>';
 
   // Active Calories
-  html += `<div class="card"><h3>Active Calories</h3>
-    <div class="stat">${v(ds.active_calories,'-')}<span class="stat-unit">kcal</span></div>
-    <div class="stat-sm">Total: ${v(ds.total_calories,'-')} kcal</div></div>`;
+  html += '<div class="card"><h3>Active Calories</h3>' +
+    '<div class="stat">' + num(ds.active_calories) + '<span class="stat-unit">kcal</span></div>' +
+    '<div class="stat-sm">Total: ' + num(ds.total_calories) + ' kcal</div></div>';
 
-  html += `</div></section>`;
+  html += '</div></section>';
 
-  // --- Training Status Strip ---
-  html += `<section><h2>Training Status</h2><div class="grid grid-4">`;
+  // --- Training Status Strip (4-column) ---
+  html += '<section><h2>Training Status</h2><div class="grid grid-4">';
 
   const tsColor = {'PRODUCTIVE':'green','MAINTAINING':'yellow','PEAKING':'green',
                    'RECOVERY':'blue','DETRAINING':'red','OVERREACHING':'red',
                    'UNPRODUCTIVE':'red','STRAINED':'red'}[ts.status] || 'yellow';
-  html += `<div class="card"><h3>Status</h3>
-    <div>${badge(v(ts.status,'?'), tsColor)}</div>
-    <div class="stat-sm" style="margin-top:.5rem">${v(ts.fitness_trend,'')}</div></div>`;
+  html += '<div class="card"><h3>Status</h3>' +
+    '<div>' + badge(v(ts.status,'?'), tsColor) + '</div>' +
+    '<div class="stat-sm" style="margin-top:.5rem">' + v(ts.fitness_trend,'') + '</div></div>';
 
-  html += `<div class="card"><h3>VO2 Max</h3>
-    <div class="stat">${v(ts.vo2_max_running,'-')}</div></div>`;
+  html += '<div class="card"><h3>VO2 Max</h3>' +
+    '<div class="stat">' + v(ts.vo2_max_running,'-') + '</div></div>';
 
   const acwrColor = (ts.acwr_percent && ts.acwr_percent > 150) ? 'red' :
                     (ts.acwr_percent && ts.acwr_percent >= 80 && ts.acwr_percent <= 130) ? 'green' : 'yellow';
-  html += `<div class="card"><h3>ACWR</h3>
-    <div class="stat">${v(ts.acwr_percent,'-')}<span class="stat-unit">%</span></div>
-    <div class="stat-sm">${badge(v(ts.acwr_status,'?'), acwrColor)}</div></div>`;
+  html += '<div class="card"><h3>ACWR</h3>' +
+    '<div class="stat">' + v(ts.acwr_percent,'-') + '<span class="stat-unit">%</span></div>' +
+    '<div class="stat-sm">' + badge(v(ts.acwr_status,'?'), acwrColor) + '</div></div>';
 
   // Race predictions
-  html += `<div class="card"><h3>Race Predictions</h3>
-    <div style="font-size:.85rem">
-    <div>5K: <strong>${v(rp.time_5k,'-')}</strong> <span class="stat-sm">${v(rp.pace_5k,'')}</span></div>
-    <div>10K: <strong>${v(rp.time_10k,'-')}</strong> <span class="stat-sm">${v(rp.pace_10k,'')}</span></div>
-    <div>HM: <strong>${v(rp.time_half_marathon,'-')}</strong> <span class="stat-sm">${v(rp.pace_half_marathon,'')}</span></div>
-    <div>M: <strong>${v(rp.time_marathon,'-')}</strong> <span class="stat-sm">${v(rp.pace_marathon,'')}</span></div>
-    </div></div>`;
+  html += '<div class="card"><h3>Race Predictions</h3>' +
+    '<div style="font-size:.9rem;line-height:1.8">' +
+    '<div>5K: <strong>' + v(rp.time_5k,'-') + '</strong> <span class="stat-sm">' + v(rp.pace_5k,'') + '</span></div>' +
+    '<div>10K: <strong>' + v(rp.time_10k,'-') + '</strong> <span class="stat-sm">' + v(rp.pace_10k,'') + '</span></div>' +
+    '<div>HM: <strong>' + v(rp.time_half_marathon,'-') + '</strong> <span class="stat-sm">' + v(rp.pace_half_marathon,'') + '</span></div>' +
+    '<div>M: <strong>' + v(rp.time_marathon,'-') + '</strong> <span class="stat-sm">' + v(rp.pace_marathon,'') + '</span></div>' +
+    '</div></div>';
 
-  html += `</div></section>`;
+  html += '</div></section>';
 
   // --- Suggested Workout ---
-  html += `<section><h2>Today's Suggested Workout</h2>`;
+  html += '<section><h2>Today\\'s Suggested Workout</h2>';
   if (wo.available) {
-    html += `<div class="workout-box">${wo.text}</div>`;
+    html += '<div class="workout-box">' + wo.text + '</div>';
   } else {
-    html += `<div class="workout-box"><span class="empty">Not generated yet. The AI workout posts to Discord at 07:00, 08:00, and 09:00 &mdash; check back after the first post.</span></div>`;
+    html += '<div class="workout-box"><span class="empty">Not generated yet. The AI workout posts daily at 07:30 &mdash; check back after.</span></div>';
   }
-  html += `</section>`;
+  html += '</section>';
 
   // --- Last 7 Days Activities ---
-  html += `<section><h2>Last 7 Days &mdash; Activities</h2>`;
+  html += '<section><h2>Last 7 Days &mdash; Activities</h2>';
   if (weekActs.length === 0) {
-    html += `<p class="stat-sm">No activities in the last 7 days.</p>`;
+    html += '<p class="stat-sm">No activities in the last 7 days.</p>';
   } else {
-    html += `<div class="card" style="overflow-x:auto"><table>
-      <tr><th>Date</th><th>Sport</th><th>Name</th><th>Distance</th><th>Duration</th><th>Load</th><th>Aer TE</th></tr>`;
+    html += '<div class="card" style="overflow-x:auto"><table>' +
+      '<tr><th>Date</th><th>Sport</th><th>Name</th><th>Distance</th><th>Duration</th><th>Load</th><th>Aer TE</th></tr>';
     for (const a of weekActs) {
       const sb = sportBucket(a.sport);
-      html += `<tr>
-        <td>${a.activity_date || '-'}</td>
-        <td><span class="sport-icon sport-${sb}"></span>${sportLabel(a.sport)}</td>
-        <td>${a.activity_name || '-'}</td>
-        <td>${a.distance_km ? fmtDist(a.distance_km)+' km' : '-'}</td>
-        <td>${fmtDuration(a.duration_minutes)}</td>
-        <td>${v(a.training_load,'-')}</td>
-        <td>${v(a.aerobic_te,'-')}</td>
-      </tr>`;
+      html += '<tr>' +
+        '<td>' + (a.activity_date || '-') + '</td>' +
+        '<td><span class="sport-icon sport-' + sb + '"></span>' + sportLabel(a.sport) + '</td>' +
+        '<td>' + (a.activity_name || '-') + '</td>' +
+        '<td>' + (a.distance_km ? fmtDist(a.distance_km)+' km' : '-') + '</td>' +
+        '<td>' + fmtDuration(a.duration_minutes) + '</td>' +
+        '<td>' + v(a.training_load,'-') + '</td>' +
+        '<td>' + v(a.aerobic_te,'-') + '</td>' +
+      '</tr>';
     }
-    html += `</table></div>`;
+    html += '</table></div>';
   }
-  html += `</section>`;
+  html += '</section>';
 
-  // --- Charts ---
-  html += `<section><h2>Weekly Overview</h2><div class="grid grid-2">`;
-
-  // Steps chart
-  html += `<div class="card"><h3>Steps (Last 7 Days)</h3><canvas id="stepsChart"></canvas></div>`;
-
-  // Training load by sport chart
-  html += `<div class="card"><h3>Training Load by Sport (4 Weeks)</h3><canvas id="loadChart"></canvas></div>`;
-
-  html += `</div></section>`;
+  // --- Charts (side by side) ---
+  html += '<section><h2>Weekly Overview</h2><div class="grid grid-2">';
+  html += '<div class="card"><h3>Steps (Last 7 Days)</h3><canvas id="stepsChart"></canvas></div>';
+  html += '<div class="card"><h3>Training Load by Sport (4 Weeks)</h3><canvas id="loadChart"></canvas></div>';
+  html += '</div></section>';
 
   // --- Gear ---
-  const activeGear = gear.filter(g => (g.status||'').toLowerCase() === 'active');
+  const activeGear = gear.filter(function(g) { return (g.status||'').toLowerCase() === 'active'; });
   if (activeGear.length > 0) {
-    html += `<section><h2>Gear</h2><div class="grid grid-4">`;
+    html += '<section><h2>Gear</h2><div class="grid grid-4">';
     for (const g of activeGear) {
       const wornColor = (g.pct_of_max && g.pct_of_max > 80) ? 'var(--red)' :
                         (g.pct_of_max && g.pct_of_max > 60) ? 'var(--yellow)' : 'var(--green)';
-      html += `<div class="card"><h3>${g.gear_type || 'Gear'}</h3>
-        <div style="font-size:.9rem;font-weight:600">${g.name}</div>
-        <div class="stat-sm">${v(g.total_distance_km,0)} km / ${v(g.max_distance_km,'?')} km</div>
-        ${g.pct_of_max != null ? progressBar(g.pct_of_max, 100, wornColor) : ''}
-        ${g.pct_of_max != null ? `<div class="stat-sm">${g.pct_of_max}% worn</div>` : ''}
-      </div>`;
+      html += '<div class="card"><h3>' + (g.gear_type || 'Gear') + '</h3>' +
+        '<div style="font-size:.9rem;font-weight:600">' + g.name + '</div>' +
+        '<div class="stat-sm">' + v(g.total_distance_km,0) + ' km / ' + v(g.max_distance_km,'?') + ' km</div>' +
+        (g.pct_of_max != null ? progressBar(g.pct_of_max, 100, wornColor) : '') +
+        (g.pct_of_max != null ? '<div class="stat-sm">' + g.pct_of_max + '% worn</div>' : '') +
+      '</div>';
     }
-    html += `</div></section>`;
+    html += '</div></section>';
   }
 
   document.getElementById('content').innerHTML = html;
 
   // --- Render charts ---
-  // Steps
   if (steps7.length > 0) {
     new Chart(document.getElementById('stepsChart'), {
       type: 'bar',
       data: {
-        labels: steps7.map(s => {const d=new Date(s.date); return d.toLocaleDateString('en',{weekday:'short'})}),
+        labels: steps7.map(function(s) { var d=new Date(s.date); return d.toLocaleDateString('en',{weekday:'short'}); }),
         datasets: [{
           label: 'Steps',
-          data: steps7.map(s => s.steps),
+          data: steps7.map(function(s) { return s.steps; }),
           backgroundColor: '#6366f1aa',
           borderRadius: 4,
         },{
           label: 'Goal',
-          data: steps7.map(s => s.goal),
+          data: steps7.map(function(s) { return s.goal; }),
           type: 'line',
           borderColor: '#9ca3af',
           borderDash: [4,4],
@@ -444,18 +453,17 @@ function renderDashboard(d) {
     });
   }
 
-  // Load by sport
   if (slw.length > 0) {
     new Chart(document.getElementById('loadChart'), {
       type: 'bar',
       data: {
-        labels: slw.map(w => {const d=new Date(w.week_start); return d.toLocaleDateString('en',{month:'short',day:'numeric'})}),
+        labels: slw.map(function(w) { var d=new Date(w.week_start); return d.toLocaleDateString('en',{month:'short',day:'numeric'}); }),
         datasets: [
-          {label:'Running', data:slw.map(w=>w.running_load), backgroundColor:SPORT_COLORS.running},
-          {label:'Cycling', data:slw.map(w=>w.cycling_load), backgroundColor:SPORT_COLORS.cycling},
-          {label:'Strength', data:slw.map(w=>w.strength_load), backgroundColor:SPORT_COLORS.strength},
-          {label:'Swimming', data:slw.map(w=>w.swimming_load), backgroundColor:SPORT_COLORS.swimming},
-          {label:'Other', data:slw.map(w=>w.other_load), backgroundColor:SPORT_COLORS.other},
+          {label:'Running', data:slw.map(function(w){return w.running_load;}), backgroundColor:SPORT_COLORS.running},
+          {label:'Cycling', data:slw.map(function(w){return w.cycling_load;}), backgroundColor:SPORT_COLORS.cycling},
+          {label:'Strength', data:slw.map(function(w){return w.strength_load;}), backgroundColor:SPORT_COLORS.strength},
+          {label:'Swimming', data:slw.map(function(w){return w.swimming_load;}), backgroundColor:SPORT_COLORS.swimming},
+          {label:'Other', data:slw.map(function(w){return w.other_load;}), backgroundColor:SPORT_COLORS.other},
         ]
       },
       options: { responsive:true, plugins:{legend:{position:'bottom',labels:{color:'#e4e4e7',boxWidth:12}}},
@@ -465,29 +473,27 @@ function renderDashboard(d) {
   }
 }
 
-// Fetch and render
 fetch('/api/summary')
-  .then(r => r.json())
-  .then(d => {
+  .then(function(r) { return r.json(); })
+  .then(function(d) {
     document.getElementById('timestamp').textContent =
       'Last updated: ' + new Date().toLocaleString();
     renderDashboard(d);
   })
-  .catch(e => {
+  .catch(function(e) {
     document.getElementById('content').innerHTML =
-      `<p style="color:var(--red)">Failed to load data: ${e.message}</p>`;
+      '<p style="color:var(--red)">Failed to load data: ' + e.message + '</p>';
   });
 
-// Auto-refresh every 5 minutes
-setInterval(() => {
+setInterval(function() {
   fetch('/api/summary')
-    .then(r => r.json())
-    .then(d => {
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
       document.getElementById('timestamp').textContent =
         'Last updated: ' + new Date().toLocaleString();
       renderDashboard(d);
     })
-    .catch(() => {});
+    .catch(function() {});
 }, 300000);
 </script>
 </body>
@@ -498,8 +504,10 @@ setInterval(() => {
 def create_dashboard_app(
     garmin: GarminClient,
     workout_cache: WorkoutCache,
+    tzinfo: ZoneInfo | None = None,
 ) -> FastAPI:
     """Create and return the FastAPI dashboard application."""
+    tz = tzinfo or ZoneInfo("UTC")
 
     app = FastAPI(title="Training Dashboard", docs_url=None, redoc_url=None)
 
@@ -513,7 +521,7 @@ def create_dashboard_app(
         if _cache.data is not None and (now - _cache.timestamp) < _cache.ttl:
             data = _cache.data
         else:
-            data = await _collect(garmin)
+            data = await _collect(garmin, tz)
             _cache.data = data
             _cache.timestamp = now
 

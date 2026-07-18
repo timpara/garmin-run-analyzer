@@ -133,7 +133,7 @@ def main() -> None:
     workout_cache = WorkoutCache()
 
     # Dashboard web app
-    dashboard_app = create_dashboard_app(garmin, workout_cache)
+    dashboard_app = create_dashboard_app(garmin, workout_cache, tzinfo)
 
     # Single-user, in-memory conversation history for the bot lifetime.
     message_history: list = []
