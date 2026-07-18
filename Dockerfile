@@ -16,6 +16,9 @@ COPY *.py ./
 RUN mkdir -p /root/.garmin_tokens
 VOLUME /root/.garmin_tokens
 
+# Dashboard port
+EXPOSE 8080
+
 # Default to discord bot; override with `docker run ... uv run python main.py`
 # for CLI mode.
 CMD ["uv", "run", "python", "discord_bot.py"]

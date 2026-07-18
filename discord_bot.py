@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import datetime
 import json
 import os
@@ -8,10 +9,12 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import discord
+import uvicorn
 from discord.ext import tasks
 from dotenv import load_dotenv
 
 from agent import Deps, create_agent
+from dashboard import WorkoutCache, create_dashboard_app
 from garmin_client import GarminClient
 
 DISCORD_MSG_LIMIT = 2000
@@ -29,10 +32,12 @@ TRAINING_RECAP_PROMPT = (
 
 DAILY_WORKOUT_CHANNEL = "daily-workout"
 DAILY_WORKOUT_PROMPT = (
-    "Give me a workout recommendation for today. Base it on my recent training, "
-    "training load, and recovery/readiness, including last night's sleep and HRV. "
-    "If today should be a rest day, say so clearly and explain why. Keep it concise "
-    "and actionable."
+    "What should I do today? Look at my recovery/readiness, recent training across "
+    "all sports (running, cycling, strength), and current load balance. Suggest the "
+    "best session for today — could be a run, a ride, a strength workout, or rest. "
+    "If I'm well recovered and my aerobic base is solid, lean toward quality work "
+    "(intervals, threshold, tempo) rather than defaulting to easy. If today should be "
+    "rest, say so and explain why. Keep it concise and actionable."
 )
 
 
@@ -92,6 +97,7 @@ def main() -> None:
         if ch.strip()
     }
     tz_name = os.getenv("DISCORD_TIMEZONE", "UTC")
+    dashboard_port = int(os.getenv("DASHBOARD_PORT", "8080"))
     try:
         tzinfo = ZoneInfo(tz_name)
     except Exception:
@@ -123,6 +129,12 @@ def main() -> None:
     agent = create_agent(ai_base_url, ai_api_key)
     deps = Deps(garmin=garmin)
 
+    # Workout cache — shared between bot (writer) and dashboard (reader)
+    workout_cache = WorkoutCache()
+
+    # Dashboard web app
+    dashboard_app = create_dashboard_app(garmin, workout_cache)
+
     # Single-user, in-memory conversation history for the bot lifetime.
     message_history: list = []
 
@@ -149,6 +161,7 @@ def main() -> None:
         try:
             # Use a throwaway history so the daily post is self-contained.
             result = await agent.run(DAILY_WORKOUT_PROMPT, deps=deps)
+            workout_cache.update(result.output)
             now = datetime.datetime.now(tzinfo)
             today = now.strftime("%A, %d %B %Y")
             label = "Updated workout" if now.hour > 7 else "Workout"
@@ -292,7 +305,23 @@ def main() -> None:
         except Exception as e:
             await message.channel.send(f"Error: {e}")
 
-    client.run(discord_token)
+    async def _run() -> None:
+        # Start both the Discord bot and the dashboard web server concurrently
+        config = uvicorn.Config(
+            dashboard_app,
+            host="0.0.0.0",
+            port=dashboard_port,
+            log_level="info",
+            access_log=False,
+        )
+        server = uvicorn.Server(config)
+        print(f"Dashboard will be available at http://0.0.0.0:{dashboard_port}")
+        await asyncio.gather(
+            client.start(discord_token),
+            server.serve(),
+        )
+
+    asyncio.run(_run())
 
 
 if __name__ == "__main__":

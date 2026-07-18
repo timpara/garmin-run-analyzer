@@ -6,7 +6,9 @@ readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
     "discord.py>=2.4.0",
+    "fastapi>=0.115.0",
     "garminconnect==0.3.6",
     "pydantic-ai[openai]>=2.10.0",
     "python-dotenv>=1.2.2",
+    "uvicorn[standard]>=0.34.0",
 ]

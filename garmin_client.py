@@ -8,6 +8,7 @@ from models import (
     AthleteProfile,
     BodyBattery,
     CrossTrainingActivity,
+    DailyStats,
     EnduranceScore,
     GearItem,
     HeartRateZone,
@@ -572,6 +573,49 @@ class GarminClient:
                 sessions_by_sport=counts,
             ))
         return out
+
+    # ------------------------------------------------------------------
+    # Daily wellness stats (steps, calories, stress, intensity minutes)
+    # ------------------------------------------------------------------
+
+    def get_daily_stats(self, target: date | None = None) -> DailyStats:
+        """Fetch daily wellness summary (steps, calories, floors, stress, etc.)."""
+        target = target or date.today()
+        d = self.api.get_stats(target.isoformat()) or {}
+        return DailyStats(
+            calendar_date=_parse_date(d.get("calendarDate")),
+            total_steps=d.get("totalSteps"),
+            step_goal=d.get("dailyStepGoal"),
+            total_distance_km=round((d.get("totalDistanceMeters") or 0) / 1000, 2) or None,
+            floors_climbed=d.get("floorsAscended"),
+            floors_goal=d.get("floorsAscendedGoal"),
+            active_calories=d.get("activeKilocalories"),
+            total_calories=d.get("totalKilocalories"),
+            moderate_intensity_minutes=d.get("moderateIntensityMinutes"),
+            vigorous_intensity_minutes=d.get("vigorousIntensityMinutes"),
+            intensity_minutes_goal=d.get("intensityMinutesGoal"),
+            avg_stress_level=d.get("averageStressLevel"),
+            max_stress_level=d.get("maxStressLevel"),
+            resting_heart_rate=d.get("restingHeartRate"),
+            min_heart_rate=d.get("minHeartRate"),
+            max_heart_rate=d.get("maxHeartRate"),
+        )
+
+    def get_steps_last_days(self, days: int = 7) -> list[dict]:
+        """Return [{date, steps, goal}] for the last N days, oldest first."""
+        results = []
+        for i in range(days - 1, -1, -1):
+            d = date.today() - timedelta(days=i)
+            try:
+                stats = self.api.get_stats(d.isoformat()) or {}
+                results.append({
+                    "date": d.isoformat(),
+                    "steps": stats.get("totalSteps") or 0,
+                    "goal": stats.get("dailyStepGoal") or 0,
+                })
+            except Exception:
+                results.append({"date": d.isoformat(), "steps": 0, "goal": 0})
+        return results
 
 
 def _sport_bucket(sport: str) -> str:

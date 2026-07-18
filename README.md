@@ -1,6 +1,6 @@
 # Garmin Run Analyzer
 
-An AI-powered running coach that connects to your Garmin Connect account and answers natural-language questions about your training, recovery, and fitness. Also runs as a Discord bot with a daily workout recommendation.
+An AI-powered running coach that connects to your Garmin Connect account and answers natural-language questions about your training, recovery, and fitness. Also runs as a Discord bot with a daily workout recommendation and a built-in KPI dashboard.
 
 ## Features
 
@@ -8,6 +8,7 @@ An AI-powered running coach that connects to your Garmin Connect account and ans
 - AI agent (GPT via Azure AI Foundry) that acts as an elite running coach
 - **CLI mode** — interactive terminal chat
 - **Discord bot mode** — chat with the coach in DMs; daily workout recommendation posted to `#daily-workout` at 07:00, 08:00, and 09:00 (configurable timezone)
+- **KPI dashboard** — a web-based training dashboard running alongside the bot at `http://<host>:8080` showing daily wellness stats, weekly activity overview, training load by sport, and the AI workout suggestion
 
 ## Requirements
 
@@ -77,6 +78,7 @@ uv run python discord_bot.py
 - Chat with the bot via **DMs** for a private coaching conversation
 - Every morning at **07:00, 08:00, and 09:00** the bot posts a workout recommendation to `#daily-workout`, refreshing as your sleep/HRV data syncs from your device
 - If `DISCORD_ALLOWED_USER_ID` is set, the bot only responds to that user
+- The **KPI dashboard** starts automatically at `http://localhost:8080` (or the port set via `DASHBOARD_PORT`)
 
 **Finding your Discord user ID:**
 Settings → Advanced → enable Developer Mode, then right-click your username → Copy User ID.
@@ -118,6 +120,7 @@ The image is automatically built and published to GHCR on every push. Use it dir
    - **Tag:** `latest`
    - **Container Configuration → Environment Variables:** add all variables from `.env.example` (`GARMIN_EMAIL`, `GARMIN_PASSWORD`, `AI_FOUNDRY_BASE_URL`, `AI_FOUNDRY_API_KEY`, `DISCORD_BOT_TOKEN`, `DISCORD_ALLOWED_USER_ID`, `DISCORD_TIMEZONE`, `DISCORD_CHANNELS`)
    - **Storage Configuration:** add a host path or volume mount at `/root/.garmin_tokens` to persist Garmin session tokens
+   - **Port Forwarding:** add a port mapping: **Container Port** `8080` → **Host Port** `8080` (or any free port). This exposes the KPI dashboard at `http://<truenas-ip>:8080`
 3. Deploy the app
 
 **Initial MFA login:** The TrueNAS Custom App doesn't support interactive input. SSH into TrueNAS and run the container interactively once to complete MFA:
@@ -154,7 +157,8 @@ docker compose up -d
 
 ```
 main.py            # CLI entry point
-discord_bot.py     # Discord bot entry point
+discord_bot.py     # Discord bot entry point (+ dashboard startup)
+dashboard.py       # KPI dashboard (FastAPI web app)
 agent.py           # Pydantic AI agent, system prompt, and all tools
 garmin_client.py   # Garmin Connect API wrapper
 models.py          # Pydantic data models

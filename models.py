@@ -255,3 +255,23 @@ class SportLoadWeek(BaseModel):
     other_load: float = 0
     running_load_pct: float | None = Field(None, description="Share of weekly load that is running")
     sessions_by_sport: dict[str, int] = Field(default_factory=dict)
+
+
+class DailyStats(BaseModel):
+    """Daily wellness stats from Garmin (steps, calories, stress, etc.)."""
+    calendar_date: date | None = None
+    total_steps: int | None = None
+    step_goal: int | None = None
+    total_distance_km: float | None = None
+    floors_climbed: int | None = None
+    floors_goal: int | None = None
+    active_calories: int | None = None
+    total_calories: int | None = None
+    moderate_intensity_minutes: int | None = None
+    vigorous_intensity_minutes: int | None = None
+    intensity_minutes_goal: int | None = None
+    avg_stress_level: int | None = None
+    max_stress_level: int | None = None
+    resting_heart_rate: int | None = None
+    min_heart_rate: int | None = None
+    max_heart_rate: int | None = None

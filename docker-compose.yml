@@ -3,6 +3,8 @@ services:
     build: .
     restart: unless-stopped
     env_file: .env
+    ports:
+      - "8080:8080"
     volumes:
       - garmin-tokens:/root/.garmin_tokens
     # First run only: use `docker compose run -it garmin-coach` to complete
