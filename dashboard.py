@@ -60,48 +60,59 @@ async def _collect(garmin: GarminClient, tzinfo: ZoneInfo) -> dict[str, Any]:
     def _fetch() -> dict[str, Any]:
         out: dict[str, Any] = {}
         today = datetime.now(tzinfo).date()
+        yesterday = today - timedelta(days=1)
 
-        # Today's wellness
+        # Helper: try today, fall back to yesterday if all values are null
+        def _with_fallback(fetch_fn, label: str) -> None:
+            try:
+                data = fetch_fn(today)
+                d = data.model_dump()
+                # Check if all values (except calendar_date) are null
+                has_data = any(
+                    v is not None
+                    for k, v in d.items()
+                    if k != "calendar_date"
+                )
+                if has_data:
+                    out[label] = d
+                    return
+                # Fall back to yesterday
+                data = fetch_fn(yesterday)
+                d = data.model_dump()
+                d["_fallback_date"] = yesterday.isoformat()
+                out[label] = d
+            except Exception as e:
+                # Try yesterday on error too
+                try:
+                    data = fetch_fn(yesterday)
+                    d = data.model_dump()
+                    d["_fallback_date"] = yesterday.isoformat()
+                    out[label] = d
+                except Exception:
+                    out[label] = {"error": str(e)}
+
+        # Today's wellness (steps reset at midnight, so no fallback for this)
         try:
             stats = garmin.get_daily_stats(today)
-            out["daily_stats"] = stats.model_dump()
+            d = stats.model_dump()
+            # If steps are null, try yesterday
+            if d.get("total_steps") is None:
+                try:
+                    stats_y = garmin.get_daily_stats(yesterday)
+                    d = stats_y.model_dump()
+                    d["_fallback_date"] = yesterday.isoformat()
+                except Exception:
+                    pass
+            out["daily_stats"] = d
         except Exception as e:
             out["daily_stats"] = {"error": str(e)}
 
-        # Body battery
-        try:
-            bb = garmin.get_body_battery(today)
-            out["body_battery"] = bb.model_dump()
-        except Exception as e:
-            out["body_battery"] = {"error": str(e)}
-
-        # Training readiness
-        try:
-            tr = garmin.get_training_readiness(today)
-            out["readiness"] = tr.model_dump()
-        except Exception as e:
-            out["readiness"] = {"error": str(e)}
-
-        # HRV
-        try:
-            hrv = garmin.get_hrv_status(today)
-            out["hrv"] = hrv.model_dump()
-        except Exception as e:
-            out["hrv"] = {"error": str(e)}
-
-        # Sleep
-        try:
-            sleep = garmin.get_sleep_summary(today)
-            out["sleep"] = sleep.model_dump()
-        except Exception as e:
-            out["sleep"] = {"error": str(e)}
-
-        # Training status
-        try:
-            ts = garmin.get_training_status(today)
-            out["training_status"] = ts.model_dump()
-        except Exception as e:
-            out["training_status"] = {"error": str(e)}
+        # Recovery/readiness metrics — fall back to yesterday after midnight
+        _with_fallback(garmin.get_body_battery, "body_battery")
+        _with_fallback(garmin.get_training_readiness, "readiness")
+        _with_fallback(garmin.get_hrv_status, "hrv")
+        _with_fallback(garmin.get_sleep_summary, "sleep")
+        _with_fallback(garmin.get_training_status, "training_status")
 
         # Race predictions
         try:
@@ -287,8 +298,12 @@ function renderDashboard(d) {
 
   let html = '';
 
+  // Detect if recovery data is from yesterday (fallback after midnight)
+  const isFallback = !!(bb._fallback_date || rd._fallback_date || sl._fallback_date);
+  const fallbackNote = isFallback ? ' <span class="stat-sm">(last available data)</span>' : '';
+
   // --- Today's Stats (8-column grid for FHD) ---
-  html += '<section><h2>Today</h2><div class="grid grid-8">';
+  html += '<section><h2>Today' + fallbackNote + '</h2><div class="grid grid-8">';
 
   // Steps
   const stepPct = pct(ds.total_steps, ds.step_goal);
