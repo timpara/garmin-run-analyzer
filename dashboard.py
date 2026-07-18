@@ -533,13 +533,17 @@ def create_dashboard_app(
 
     @app.get("/api/debug/stats", response_class=JSONResponse)
     async def debug_stats():
-        """Temporary endpoint — returns raw Garmin API responses for debugging."""
+        """Temporary endpoint — returns raw Garmin API responses for debugging.
+        Shows all keys sorted alphabetically so missing fields are easy to spot."""
         today = datetime.now(tz).date()
 
         def _raw():
             out = {}
             try:
-                out["get_stats"] = garmin.api.get_stats(today.isoformat())
+                raw = garmin.api.get_stats(today.isoformat()) or {}
+                # Sort keys and include all, even null — that's the point
+                out["get_stats_keys"] = sorted(raw.keys())
+                out["get_stats"] = {k: raw[k] for k in sorted(raw.keys())}
             except Exception as e:
                 out["get_stats_error"] = str(e)
             try:
@@ -548,10 +552,6 @@ def create_dashboard_app(
                 )
             except Exception as e:
                 out["get_daily_steps_error"] = str(e)
-            try:
-                out["get_steps_data"] = garmin.api.get_steps_data(today.isoformat())
-            except Exception as e:
-                out["get_steps_data_error"] = str(e)
             return out
 
         data = await asyncio.to_thread(_raw)

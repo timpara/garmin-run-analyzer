@@ -600,10 +600,18 @@ class GarminClient:
         total_steps = _first(["totalSteps", "wellnessTotalSteps"])
         step_goal = _first(["dailyStepGoal", "stepGoal", "wellnessTotalDailyStepGoal"])
         active_cal = _first(["activeKilocalories", "wellnessActiveKilocalories"])
-        total_cal = _first(["totalKilocalories", "wellnessKilocalories"])
-        mod_int = _first(["moderateIntensityMinutes", "wellnessModerateIntensityMinutes"])
-        vig_int = _first(["vigorousIntensityMinutes", "wellnessVigorousIntensityMinutes"])
-        int_goal = _first(["intensityMinutesGoal", "wellnessIntensityMinutesGoal"])
+        total_cal = _first(["totalKilocalories", "wellnessKilocalories", "burnedKilocalories"])
+        # Compute total from active + BMR if direct total is unavailable
+        if total_cal is None and active_cal is not None:
+            bmr = _first(["bmrKilocalories", "wellnessBmrKilocalories"])
+            if bmr is not None:
+                total_cal = round(active_cal + bmr)
+        mod_int = _first(["moderateIntensityMinutes", "wellnessModerateIntensityMinutes",
+                          "currentDayIntensityMinutes"])
+        vig_int = _first(["vigorousIntensityMinutes", "wellnessVigorousIntensityMinutes",
+                          "currentDayVigorousIntensityMinutes"])
+        int_goal = _first(["intensityMinutesGoal", "wellnessIntensityMinutesGoal",
+                           "weeklyIntensityMinutesGoal"])
         floors = _first(["floorsAscended", "wellnessFloorsAscended"])
         floors_goal = _first(["floorsAscendedGoal", "userFloorsAscendedGoal", "wellnessFloorsAscendedGoal"])
         rhr = _first(["restingHeartRate", "wellnessRestingHeartRate"])
