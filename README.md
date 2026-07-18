@@ -7,7 +7,7 @@ An AI-powered running coach that connects to your Garmin Connect account and ans
 - Fetches live data from Garmin Connect (runs, HR zones, sleep, HRV, training load, body battery, race predictions, shoe mileage, and more)
 - AI agent (GPT via Azure AI Foundry) that acts as an elite running coach
 - **CLI mode** — interactive terminal chat
-- **Discord bot mode** — chat with the coach in DMs; daily workout recommendation posted to `#daily-workout` at 07:00, 08:00, and 09:00 (configurable timezone)
+- **Discord bot mode** — chat with the coach in DMs; daily workout recommendation posted to `#daily-workout` at 07:30 (configurable timezone)
 - **KPI dashboard** — a web-based training dashboard running alongside the bot at `http://<host>:8080` showing daily wellness stats, weekly activity overview, training load by sport, and the AI workout suggestion
 
 ## Requirements
@@ -76,7 +76,7 @@ uv run python discord_bot.py
 **How it works:**
 
 - Chat with the bot via **DMs** for a private coaching conversation
-- Every morning at **07:00, 08:00, and 09:00** the bot posts a workout recommendation to `#daily-workout`, refreshing as your sleep/HRV data syncs from your device
+- Every morning at **07:30** the bot posts a workout recommendation to `#daily-workout`
 - If `DISCORD_ALLOWED_USER_ID` is set, the bot only responds to that user
 - The **KPI dashboard** starts automatically at `http://localhost:8080` (or the port set via `DASHBOARD_PORT`)
 

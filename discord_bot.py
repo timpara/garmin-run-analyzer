@@ -164,7 +164,7 @@ def main() -> None:
             workout_cache.update(result.output)
             now = datetime.datetime.now(tzinfo)
             today = now.strftime("%A, %d %B %Y")
-            label = "Updated workout" if now.hour > 7 else "Workout"
+            label = "Workout"
             header = f"**{label} for {today}** (as of {now.strftime('%H:%M')})\n\n"
             for chunk in split_message(header + result.output):
                 await channel.send(chunk)
@@ -173,8 +173,8 @@ def main() -> None:
 
     @tasks.loop(
         time=[
-            datetime.time(hour=7, minute=0, tzinfo=tzinfo),
-            datetime.time(hour=8, minute=0, tzinfo=tzinfo),
+            datetime.time(hour=7, minute=30, tzinfo=tzinfo),
+        ],
             datetime.time(hour=9, minute=0, tzinfo=tzinfo),
         ],
     )
@@ -259,7 +259,7 @@ def main() -> None:
         if not daily_workout_task.is_running():
             daily_workout_task.start()
             print(
-                f"Scheduled daily workout posts at 07:00, 08:00, 09:00 {tz_name} "
+                f"Scheduled daily workout post at 07:30 {tz_name} "
                 f"in #{DAILY_WORKOUT_CHANNEL}."
             )
         if not training_recap_task.is_running():
