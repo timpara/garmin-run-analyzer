@@ -263,10 +263,10 @@ class DailyStats(BaseModel):
     total_steps: int | None = None
     step_goal: int | None = None
     total_distance_km: float | None = None
-    floors_climbed: int | None = None
-    floors_goal: int | None = None
-    active_calories: int | None = None
-    total_calories: int | None = None
+    floors_climbed: float | None = None
+    floors_goal: float | None = None
+    active_calories: float | None = None
+    total_calories: float | None = None
     moderate_intensity_minutes: int | None = None
     vigorous_intensity_minutes: int | None = None
     intensity_minutes_goal: int | None = None
