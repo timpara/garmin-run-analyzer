@@ -531,6 +531,32 @@ def create_dashboard_app(
         # Convert date objects to strings for JSON serialisation
         return _jsonify(data)
 
+    @app.get("/api/debug/stats", response_class=JSONResponse)
+    async def debug_stats():
+        """Temporary endpoint — returns raw Garmin API responses for debugging."""
+        today = datetime.now(tz).date()
+
+        def _raw():
+            out = {}
+            try:
+                out["get_stats"] = garmin.api.get_stats(today.isoformat())
+            except Exception as e:
+                out["get_stats_error"] = str(e)
+            try:
+                out["get_daily_steps"] = garmin.api.get_daily_steps(
+                    today.isoformat(), today.isoformat()
+                )
+            except Exception as e:
+                out["get_daily_steps_error"] = str(e)
+            try:
+                out["get_steps_data"] = garmin.api.get_steps_data(today.isoformat())
+            except Exception as e:
+                out["get_steps_data_error"] = str(e)
+            return out
+
+        data = await asyncio.to_thread(_raw)
+        return _jsonify(data)
+
     return app
 
 

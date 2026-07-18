@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
+from typing import Any
 
 from garminconnect import Garmin
 
@@ -579,43 +580,114 @@ class GarminClient:
     # ------------------------------------------------------------------
 
     def get_daily_stats(self, target: date | None = None) -> DailyStats:
-        """Fetch daily wellness summary (steps, calories, floors, stress, etc.)."""
+        """Fetch daily wellness summary (steps, calories, floors, stress, etc.).
+
+        Uses get_stats (usersummary/daily) with fallback field aliases, plus
+        the dedicated get_daily_steps endpoint to backfill steps/goal when the
+        summary returns them as null.
+        """
         target = target or date.today()
         d = self.api.get_stats(target.isoformat()) or {}
+
+        # Helper: try multiple key aliases, return first non-None
+        def _first(keys: list[str]) -> Any:
+            for k in keys:
+                v = d.get(k)
+                if v is not None:
+                    return v
+            return None
+
+        total_steps = _first(["totalSteps", "wellnessTotalSteps"])
+        step_goal = _first(["dailyStepGoal", "stepGoal", "wellnessTotalDailyStepGoal"])
+        active_cal = _first(["activeKilocalories", "wellnessActiveKilocalories"])
+        total_cal = _first(["totalKilocalories", "wellnessKilocalories"])
+        mod_int = _first(["moderateIntensityMinutes", "wellnessModerateIntensityMinutes"])
+        vig_int = _first(["vigorousIntensityMinutes", "wellnessVigorousIntensityMinutes"])
+        int_goal = _first(["intensityMinutesGoal", "wellnessIntensityMinutesGoal"])
+        floors = _first(["floorsAscended", "wellnessFloorsAscended"])
+        floors_goal = _first(["floorsAscendedGoal", "userFloorsAscendedGoal", "wellnessFloorsAscendedGoal"])
+        rhr = _first(["restingHeartRate", "wellnessRestingHeartRate"])
+        min_hr = _first(["minHeartRate", "wellnessMinHeartRate"])
+        max_hr = _first(["maxHeartRate", "wellnessMaxHeartRate"])
+        avg_stress = _first(["averageStressLevel", "wellnessAverageStressLevel"])
+        max_stress = _first(["maxStressLevel", "wellnessMaxStressLevel"])
+        dist_m = _first(["totalDistanceMeters", "wellnessTotalDistanceMeters"]) or 0
+
+        # Backfill steps + goal from dedicated steps endpoint if summary was null
+        if total_steps is None or step_goal is None:
+            try:
+                steps_data = self.api.get_daily_steps(
+                    target.isoformat(), target.isoformat()
+                )
+                if steps_data and isinstance(steps_data, list) and steps_data:
+                    row = steps_data[0]
+                    if total_steps is None:
+                        total_steps = row.get("totalSteps")
+                    if step_goal is None:
+                        step_goal = row.get("stepGoal")
+                    if dist_m == 0:
+                        dist_m = row.get("totalDistance") or 0
+            except Exception:
+                pass
+
         return DailyStats(
             calendar_date=_parse_date(d.get("calendarDate")),
-            total_steps=d.get("totalSteps"),
-            step_goal=d.get("dailyStepGoal"),
-            total_distance_km=round((d.get("totalDistanceMeters") or 0) / 1000, 2) or None,
-            floors_climbed=d.get("floorsAscended"),
-            floors_goal=d.get("floorsAscendedGoal"),
-            active_calories=d.get("activeKilocalories"),
-            total_calories=d.get("totalKilocalories"),
-            moderate_intensity_minutes=d.get("moderateIntensityMinutes"),
-            vigorous_intensity_minutes=d.get("vigorousIntensityMinutes"),
-            intensity_minutes_goal=d.get("intensityMinutesGoal"),
-            avg_stress_level=d.get("averageStressLevel"),
-            max_stress_level=d.get("maxStressLevel"),
-            resting_heart_rate=d.get("restingHeartRate"),
-            min_heart_rate=d.get("minHeartRate"),
-            max_heart_rate=d.get("maxHeartRate"),
+            total_steps=total_steps,
+            step_goal=step_goal,
+            total_distance_km=round(dist_m / 1000, 2) or None,
+            floors_climbed=floors,
+            floors_goal=floors_goal,
+            active_calories=active_cal,
+            total_calories=total_cal,
+            moderate_intensity_minutes=mod_int,
+            vigorous_intensity_minutes=vig_int,
+            intensity_minutes_goal=int_goal,
+            avg_stress_level=avg_stress,
+            max_stress_level=max_stress,
+            resting_heart_rate=rhr,
+            min_heart_rate=min_hr,
+            max_heart_rate=max_hr,
         )
 
     def get_steps_last_days(self, days: int = 7) -> list[dict]:
         """Return [{date, steps, goal}] for the last N days, oldest first."""
-        results = []
-        for i in range(days - 1, -1, -1):
-            d = date.today() - timedelta(days=i)
-            try:
-                stats = self.api.get_stats(d.isoformat()) or {}
+        end = date.today()
+        start = end - timedelta(days=days - 1)
+        try:
+            raw = self.api.get_daily_steps(
+                start.isoformat(), end.isoformat()
+            ) or []
+            results = []
+            for row in raw:
                 results.append({
-                    "date": d.isoformat(),
-                    "steps": stats.get("totalSteps") or 0,
-                    "goal": stats.get("dailyStepGoal") or 0,
+                    "date": row.get("calendarDate", ""),
+                    "steps": row.get("totalSteps") or 0,
+                    "goal": row.get("stepGoal") or 0,
                 })
-            except Exception:
-                results.append({"date": d.isoformat(), "steps": 0, "goal": 0})
-        return results
+            # Pad if fewer rows returned
+            if len(results) < days:
+                existing_dates = {r["date"] for r in results}
+                for i in range(days - 1, -1, -1):
+                    d = (end - timedelta(days=i)).isoformat()
+                    if d not in existing_dates:
+                        results.append({"date": d, "steps": 0, "goal": 0})
+            results.sort(key=lambda r: r["date"])
+            return results
+        except Exception:
+            # Fallback: individual calls
+            results = []
+            for i in range(days - 1, -1, -1):
+                d = end - timedelta(days=i)
+                try:
+                    stats = self.api.get_stats(d.isoformat()) or {}
+                    results.append({
+                        "date": d.isoformat(),
+                        "steps": stats.get("totalSteps") or stats.get("wellnessTotalSteps") or 0,
+                        "goal": stats.get("dailyStepGoal") or stats.get("stepGoal") or 0,
+                    })
+                except Exception:
+                    results.append({"date": d.isoformat(), "steps": 0, "goal": 0})
+            return results
 
 
 def _sport_bucket(sport: str) -> str:
