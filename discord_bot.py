@@ -175,8 +175,6 @@ def main() -> None:
         time=[
             datetime.time(hour=7, minute=30, tzinfo=tzinfo),
         ],
-            datetime.time(hour=9, minute=0, tzinfo=tzinfo),
-        ],
     )
     async def daily_workout_task() -> None:
         await post_daily_workout()
