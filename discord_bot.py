@@ -18,15 +18,15 @@ from dashboard import WorkoutCache, create_dashboard_app
 from garmin_client import GarminClient
 
 DISCORD_MSG_LIMIT = 2000
-SEEN_RUNS_FILE = Path(os.getenv("SEEN_RUNS_FILE", "seen_runs.json"))
+SEEN_RUNS_FILE = Path(os.getenv("SEEN_RUNS_FILE", "/root/.garmin_tokens/seen_runs.json"))
 MAX_SEEN_IDS = 200
 
 TRAINING_RECAP_CHANNEL = "training-recap"
 TRAINING_RECAP_PROMPT = (
-    "A new run just completed. Here are the basic stats:\n\n{run_summary}\n\n"
-    "Use get_run_details (activity_id {activity_id}) and any other relevant tools "
-    "to do a full analysis. Assess pacing consistency, HR drift, effort vs zones, "
-    "and any notable patterns. Give a short verdict (1 line) followed by 1-2 key "
+    "A new activity just completed. Here are the basic stats:\n\n{run_summary}\n\n"
+    "Use the relevant tools (get_run_details for runs, get_cross_training for context) "
+    "to do a full analysis. Assess effort, training effect, and how this fits into the "
+    "weekly training picture. Give a short verdict (1 line) followed by 1-2 key "
     "observations and one actionable takeaway. Keep it under 300 words."
 )
 
@@ -203,49 +203,53 @@ def main() -> None:
             return
 
         try:
-            recent_runs = garmin.get_recent_runs(5)
+            recent_activities = garmin.get_recent_activities(10)
         except Exception as e:
-            print(f"[training-recap] Failed to fetch recent runs: {e}")
+            print(f"[training-recap] Failed to fetch recent activities: {e}")
             return
 
         # On first ever run (empty state), seed with current IDs to avoid spam.
         if not seen_runs:
-            seen_runs = {r.activity_id for r in recent_runs}
+            seen_runs = {a.activity_id for a in recent_activities}
             save_seen_runs(seen_runs)
-            print(f"[training-recap] Seeded {len(seen_runs)} existing run IDs.")
+            print(f"[training-recap] Seeded {len(seen_runs)} existing activity IDs.")
             return
 
-        new_runs = [r for r in recent_runs if r.activity_id not in seen_runs]
-        if not new_runs:
+        new_activities = [a for a in recent_activities if a.activity_id not in seen_runs]
+        if not new_activities:
             return
 
-        for run in new_runs:
-            pace_str = (
-                f"{int(run.avg_pace_min_per_km)}:{int((run.avg_pace_min_per_km % 1) * 60):02d}/km"
-                if run.avg_pace_min_per_km
-                else "N/A"
-            )
+        for act in new_activities:
+            # Build summary based on activity type
+            duration_str = f"{int(act.duration_minutes)}m"
+            if act.duration_minutes >= 60:
+                h = int(act.duration_minutes // 60)
+                m = int(act.duration_minutes % 60)
+                duration_str = f"{h}h {m}m"
+
             run_summary = (
-                f"- Name: {run.activity_name}\n"
-                f"- Date: {run.activity_date}\n"
-                f"- Distance: {run.distance_km:.2f} km\n"
-                f"- Duration: {int(run.duration_seconds // 60)}:{int(run.duration_seconds % 60):02d}\n"
-                f"- Avg Pace: {pace_str}\n"
-                f"- Avg HR: {run.avg_heart_rate or 'N/A'} bpm\n"
-                f"- Elevation Gain: {run.elevation_gain_m or 0:.0f} m"
+                f"- Sport: {act.sport}\n"
+                f"- Name: {act.activity_name}\n"
+                f"- Date: {act.activity_date}\n"
+                f"- Distance: {act.distance_km:.2f} km\n"
+                f"- Duration: {duration_str}\n"
+                f"- Training Load: {act.training_load or 'N/A'}\n"
+                f"- Aerobic TE: {act.aerobic_te or 'N/A'}\n"
+                f"- Anaerobic TE: {act.anaerobic_te or 'N/A'}"
             )
             prompt = TRAINING_RECAP_PROMPT.format(
-                run_summary=run_summary, activity_id=run.activity_id
+                run_summary=run_summary, activity_id=act.activity_id
             )
             try:
                 result = await agent.run(prompt, deps=deps)
-                header = f"**New Run: {run.activity_name}** ({run.activity_date})\n\n"
+                sport_label = act.sport.replace("_", " ").title()
+                header = f"**New {sport_label}: {act.activity_name}** ({act.activity_date})\n\n"
                 for chunk in split_message(header + result.output):
                     await channel.send(chunk)
-                seen_runs.add(run.activity_id)
+                seen_runs.add(act.activity_id)
                 save_seen_runs(seen_runs)
             except Exception as e:
-                print(f"[training-recap] Error posting recap for {run.activity_id}: {e}")
+                print(f"[training-recap] Error posting recap for {act.activity_id}: {e}")
 
     @training_recap_task.before_loop
     async def before_training_recap() -> None:
